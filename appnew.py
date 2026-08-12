@@ -58,6 +58,11 @@ st.markdown("""
         padding: 8px 16px; border-radius: 30px; font-weight: 700; display: inline-block;
         border: 1px solid #FFD54F;
     }
+    .badge-notturmeric {
+        background: linear-gradient(90deg, #ECEFF1, #CFD8DC); color: #37474F;
+        padding: 8px 16px; border-radius: 30px; font-weight: 700; display: inline-block;
+        border: 1px solid #B0BEC5;
+    }
     .footer-note { color: #999; font-size: 0.85em; text-align: center; margin-top: 30px; }
     div[data-testid="stFileUploader"] { background: white; padding: 20px; border-radius: 14px;
         border: 2px dashed #E8C468; }
@@ -74,6 +79,35 @@ def load_model():
 model = load_model()
 CLASS_NAMES = ["Adulterated", "Pure"]
 CONFIDENCE_THRESHOLD = 65.0
+TURMERIC_HUE_MIN_RATIO = 0.15  # min fraction of pixels that must look yellow/orange
+
+def is_turmeric_like(pil_img):
+    """
+    Quick heuristic gate to catch obviously non-turmeric uploads (notebook pages,
+    random photos, etc.) before they reach the CNN. Checks the fraction of pixels
+    that fall in the yellow/orange hue range typical of turmeric powder, plus a
+    basic texture/saturation check to reject flat, low-saturation images like
+    scanned text or plain paper.
+    Returns (is_valid: bool, reason: str)
+    """
+    rgb = np.array(pil_img.convert("RGB"))
+    hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+    h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+
+    # Turmeric yellow/orange sits roughly in Hue 10-40 (OpenCV H range 0-179)
+    hue_mask = (h >= 8) & (h <= 45)
+    # Require some saturation so grey/white paper isn't falsely counted
+    sat_mask = s > 40
+    turmeric_mask = hue_mask & sat_mask
+
+    turmeric_ratio = float(np.mean(turmeric_mask))
+    mean_saturation = float(np.mean(s))
+
+    if turmeric_ratio < TURMERIC_HUE_MIN_RATIO:
+        return False, "Image doesn't show enough yellow/orange turmeric-like color."
+    if mean_saturation < 20:
+        return False, "Image looks too flat/desaturated to be a turmeric sample."
+    return True, ""
 
 def preprocess_image(pil_img):
     img = np.array(pil_img.convert("L"))
@@ -145,6 +179,18 @@ if uploaded_files:
     with st.spinner(f"Analyzing {len(uploaded_files)} sample(s)..."):
         for f in uploaded_files:
             pil_img = Image.open(f)
+            valid, reason = is_turmeric_like(pil_img)
+            if not valid:
+                results.append({
+                    "filename": f.name,
+                    "image": pil_img,
+                    "processed": None,
+                    "status": "Not Turmeric",
+                    "confidence": 0.0,
+                    "preds": None,
+                    "reason": reason,
+                })
+                continue
             status, confidence, processed_preview, preds = classify(pil_img)
             results.append({
                 "filename": f.name,
@@ -153,20 +199,23 @@ if uploaded_files:
                 "status": status,
                 "confidence": confidence,
                 "preds": preds,
+                "reason": "",
             })
 
     # ---- Summary stats ----
     n_pure = sum(1 for r in results if r["status"] == "Pure")
     n_adult = sum(1 for r in results if r["status"] == "Adulterated")
     n_unsure = sum(1 for r in results if r["status"] == "Inconclusive")
+    n_invalid = sum(1 for r in results if r["status"] == "Not Turmeric")
 
     st.markdown("### 📊 Summary")
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     for col, num, label in [
         (c1, len(results), "Total Samples"),
         (c2, n_pure, "✅ Pure"),
         (c3, n_adult, "⚠️ Adulterated"),
         (c4, n_unsure, "❓ Inconclusive"),
+        (c5, n_invalid, "🚫 Not Turmeric"),
     ]:
         with col:
             st.markdown(f"""
@@ -183,6 +232,7 @@ if uploaded_files:
         "Pure": ("badge-pure", "✅ PURE TURMERIC"),
         "Adulterated": ("badge-adulterated", "⚠️ ADULTERATED"),
         "Inconclusive": ("badge-uncertain", "❓ INCONCLUSIVE"),
+        "Not Turmeric": ("badge-notturmeric", "🚫 NOT TURMERIC"),
     }
 
     # grid layout: 3 cards per row
@@ -196,8 +246,12 @@ if uploaded_files:
                 st.markdown('<div class="result-card">', unsafe_allow_html=True)
                 st.image(r["image"], use_container_width=True)
                 st.markdown(f'<span class="{badge_class}">{badge_text}</span>', unsafe_allow_html=True)
-                st.caption(f"**{r['filename']}** · Confidence: {r['confidence']:.1f}%")
-                st.progress(r["confidence"] / 100)
+                if r["status"] == "Not Turmeric":
+                    st.caption(f"**{r['filename']}**")
+                    st.caption(f"⚠️ {r['reason']}")
+                else:
+                    st.caption(f"**{r['filename']}** · Confidence: {r['confidence']:.1f}%")
+                    st.progress(r["confidence"] / 100)
                 st.markdown('</div>', unsafe_allow_html=True)
 
     # ---- Table view ----
