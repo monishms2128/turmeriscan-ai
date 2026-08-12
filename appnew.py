@@ -103,10 +103,12 @@ def is_turmeric_like(pil_img):
     turmeric_ratio = float(np.mean(turmeric_mask))
     mean_saturation = float(np.mean(s))
 
-    if turmeric_ratio < TURMERIC_HUE_MIN_RATIO:
-        return False, "Image doesn't show enough yellow/orange turmeric-like color."
-    if mean_saturation < 20:
-        return False, "Image looks too flat/desaturated to be a turmeric sample."
+    # TEMP: color-hue gate disabled — needs calibration against real multispectral
+    # sample images before re-enabling (RGB hue assumptions don't match spectral output).
+    # if turmeric_ratio < TURMERIC_HUE_MIN_RATIO:
+    #     return False, "Image doesn't show enough yellow/orange turmeric-like color."
+    # if mean_saturation < 20:
+    #     return False, "Image looks too flat/desaturated to be a turmeric sample."
     return True, ""
 
 def preprocess_image(pil_img):
